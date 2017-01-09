@@ -25,7 +25,7 @@ test_that("Missing values", {
 test_that("Regression", {
     mod3 <- DeepLearning(medv~crim+zn+indus+chas+nox+rm+age+dis+rad+tax+ptratio+b+lstat, data=BostonHousing)
     pred3 <- predict(mod3)
-    expect_equal(class(pred3), "numeric")
+    expect_equal(class(pred3[,1]), "numeric")
 })
 
 test_that("Filter", {

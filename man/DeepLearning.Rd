@@ -4,13 +4,11 @@
 \alias{DeepLearning}
 \title{\code{DeepLearning}}
 \usage{
-DeepLearning(formula, hidden = c(50, 50),
-  unit.function = "rectifiedLinearUnit", learning.rate = 0.01,
-  learning.decay = 0, dropout.input = 0, dropout.hidden = 0.5,
-  dither = F, epochs = 100, batch.size = 1, bootstrap = T,
-  pretrain.epoch = 0, data = NULL, subset = NULL, weights = NULL,
-  output = "Summary", missing = "Exclude cases with missing data",
-  seed = 12321, show.labels = FALSE, ...)
+DeepLearning(formula, hidden = c(50, 50), unit.function = "relu",
+  optimizer = "adam", epochs = 100, batch.size = 100, data = NULL,
+  subset = NULL, weights = NULL, output = "Summary",
+  missing = "Exclude cases with missing data", seed = 12321,
+  show.labels = FALSE, ...)
 }
 \arguments{
 \item{formula}{A formula of the form \code{groups ~ x1 + x2 + ...}

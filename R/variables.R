@@ -118,17 +118,29 @@ Probabilities.DeepLearning <- function(x)
 
 
 #' @importFrom flipTransformations RemoveMissingLevelsFromFactors
-#' @import darch
+#' @import mxnet
 deepLearningExtractVariables <- function(object, type, newdata = object$model, na.action = na.pass)
 {
-    # predict.DArch will stop if any previously unobserved data is seen
-    # we do some rough data cleaning to avoid stopping if possible
-    # note that filtered and missing data (or imputed values) are included
-    any.missing <- apply(newdata, 1, function(x){any(is.na(x))})
-    if (sum(any.missing) > 0)
-        newdata[any.missing,] <- NA
-    newdata <- RemoveMissingLevelsFromFactors(newdata)
-    predict(object$original, type=type, newdata = newdata, na.action = na.action)
+    input.data <- dataToNumeric(newdata)
+    new.names <- colnames(input.data)
+    old.names <- colnames(object$estimation.data[,-1])
+
+    missing.names <- setdiff(old.names, new.names)
+    if (length(missing.names) > 0)
+        stop ("newdata is missing variables: ", missing.names, "\n")
+    input.data <- as.matrix(input.data[,old.names])
+
+    res <- t(predict(object$original, X = input.data, array.layout = "rowmajor"))
+    if (!object$numeric.outcome)
+        colnames(res) <- object$outcome.levels
+
+    if (type == "class")
+    {
+        ind.max <- apply(res, 1, which.max)
+        pred.class <- object$outcome.levels[ind.max]
+        return(pred.class)
+    }
+    return(res)
 }
 
 

@@ -1,5 +1,48 @@
+#' Takes a data frame as input as converts output to a numeric matrix
+#' Unlike data.matrix, factors are converted to an indicator matrix
+#' We don't want to remove missing levels from prediction data
+#' @importFrom flipTransformations FactorToIndicators
+dataToNumeric <- function(df)
+{
+    ctmp <- unlist(lapply(df, function(x){paste(class(x), collapse=" ")}))
+    ind <- which(ctmp != "character")
+    if (length(ind) == 0)
+        stop ("No numeric or factor columns in input data frame\n")
+    if (length(ind) < ncol(df))
+        warning("Columns of class 'character' discarded\n")
+
+    res <- as.data.frame(lapply(df[,ind], function(x){
+                   if (any(class(x) == "factor"))
+                   {
+                       return(FactorToNumeric(x, remove.first=F))
+                   } else
+                   {
+                       return(x)
+                   }
+    }))
+
+    cnames <- c()
+    for (i in 1:ncol(df))
+    {
+        if (any(class(df[,i]) == "character"))
+            next
+        if (any(class(df[,i]) == "factor"))
+        {
+            tmp <- sprintf("%s:%s", colnames(df)[i], levels(df[,i]))
+            cnames <- c(cnames, tmp)
+        } else
+        {
+            cnames <- c(cnames, colnames(df)[i])
+        }
+    }
+    colnames(res) <- cnames
+    return(res)
+}
+
+
 #' \code{DeepLearning}
 #'
+#' @description Constructs a deep learning model using a fully connected neural network with hidden layers
 #' @param formula A formula of the form \code{groups ~ x1 + x2 + ...}
 #' That is, the response is the grouping factor and the right hand side
 #' specifies the (non-factor) discriminators, and any transformations, interactions,
@@ -23,21 +66,15 @@
 #' @importFrom flipData GetData CleanSubset CleanWeights EstimationData DataFormula
 #' @importFrom flipFormat Labels
 #' @importFrom flipU OutcomeName
-#' @importFrom flipTransformations AdjustDataToReflectWeights
-#' @import darch
+#' @importFrom flipTransformations AdjustDataToReflectWeights FactorToNumeric
+#' @import mxnet
 #' @export
 DeepLearning <- function(formula,
                 hidden = c(50, 50),
-                unit.function = "rectifiedLinearUnit",
-                learning.rate = 0.01,
-                learning.decay = 0,
-                dropout.input = 0,
-                dropout.hidden = 0.5,
-                dither = F,
-                epochs = 100,
-                batch.size = 1,
-                bootstrap = T,
-                pretrain.epoch = 0,
+                unit.function = "relu",
+                optimizer = "adam",
+                epochs = 500,
+                batch.size = 100,
                 data = NULL,
                 subset = NULL,
                 weights = NULL,
@@ -57,6 +94,8 @@ DeepLearning <- function(formula,
         stop("'hidden' should be a comma-separated list specifying the number of units in each layer\n")
     if (any(hidden != round(hidden)))
         stop("'hidden' should be a list of integers\n")
+    if (length(hidden) < 1)
+        stop("hidden must be a vector of at least length 1\n")
 
     ####################################################################
     ##### Reading in the data and doing some basic tidying        ######
@@ -103,10 +142,8 @@ DeepLearning <- function(formula,
     .weights <- processed.data$weights
     .formula <- DataFormula(input.formula)
     # Resampling to generate a weighted sample, if necessary.
-    .estimation.data.1 <- if (is.null(weights))
-        .estimation.data
-    else
-        AdjustDataToReflectWeights(.estimation.data, .weights)
+    .estimation.data.1 <- if (is.null(weights)) .estimation.data
+                          else AdjustDataToReflectWeights(.estimation.data, .weights)
 
     ####################################################################
     ##### Fitting the model. Ideally, this should be a call to     #####
@@ -129,37 +166,46 @@ DeepLearning <- function(formula,
         vnames <- c(vnames, paste0(cnames[i], tmp))
     }
 
-    # Not sure why, but it seems necessary to load darch library in this way
-    # Using @import in the header or requireNamespace() both do not work
-    require(darch)
-    result <- list()
-    nlev <- nlevels(.estimation.data.1[,1])
-    if (is.null(nlev) || nlev == 0)
-        nlev <- 1
-    obj <- darch(formula, data=.estimation.data.1,
-                     layers=c(length(vnames),hidden,nlev),
-                     preProc.params = if(numeric.outcome) list(method=c("center","scale")) else NULL,
-                     preProc.targets = numeric.outcome,
-                     preProc.fullRank = F,
-                     normalizeWeights=T,
-                     bootstrap = bootstrap,
-                     darch.isClass = !numeric.outcome,
-                     darch.unitFunction = c(rep(unit.function, length(hidden)),
-                                            ifelse(numeric.outcome, "linearUnit", "softmaxUnit")),
-                     darch.dither = dither,
-                     darch.dropout = c(dropout.input, rep(dropout.hidden, length(hidden))),
-                     bp.learnRate = learning.rate,
-                     bp.learnRateScale = 1 - learning.decay,
-                     darch.numEpochs = epochs,
-                     darch.batchSize = batch.size,
-                     rbm.numEpochs = pretrain.epoch,
-                     rbm.lastLayer = -1,
-                     darch.returnBestModel = T,
-                     logLevel = "WARN",
-                     seed = seed,
-                     ...)
+    # Outcome variable is never converted to indicator!
+    mmin <- min(as.numeric(.estimation.data.1[,1]), na.rm=T)
+    estimation.data.2 <- cbind(as.numeric(.estimation.data.1[,1]),
+                               dataToNumeric(.estimation.data.1[,-1]))
+
+    # Class labels MUST start at zero
+    if (!numeric.outcome)
+        estimation.data.2[,1] <- estimation.data.2[,1] - mmin
+
+    colnames(estimation.data.2)[1] <- outcome.name
+    estimation.data.2 <- as.matrix(estimation.data.2)
+
+    # Construct network
+    num.output.units <- ifelse(numeric.outcome, 1, length(unique(estimation.data.2[,1])))
+    loss.func <- if (numeric.outcome) mx.metric.rmse
+                 else mx.metric.accuracy
+
+    net <- mx.symbol.Variable("data")
+    for (i in 1:(length(hidden)))
+    {
+        net <- mx.symbol.FullyConnected(net, num_hidden=hidden[i], name=paste0("fc", i))
+        net <- mx.symbol.Activation(net, act_type=unit.function, name=paste0("act", i))
+    }
+    net <- mx.symbol.FullyConnected(net, num_hidden=num.output.units, name=paste0("fc", length(hidden)+1))
+    net <- if (numeric.outcome) mx.symbol.LinearRegressionOutput(net)
+           else mx.symbol.SoftmaxOutput(net)
+
+    logger <- mx.metric.logger$new()
+    obj <- mx.model.FeedForward.create(net, X=estimation.data.2[,-1], y=estimation.data.2[,1],
+                                       optimizer=optimizer,
+                                       eval.metric=loss.func,
+                                       num.round=epochs,
+                                       array.batch.size=batch.size,
+                                       array.layout="rowmajor",
+                                       epoch.end.callback = mx.callback.log.train.metric(10, logger),
+                                       verbose=FALSE)
+
     result <- list()
     result$original <- obj
+    result$log <- logger$train
     result$call <- cl
 
 
@@ -168,15 +214,16 @@ DeepLearning <- function(formula,
     ####################################################################
     result$subset <- subset <- row.names %in% rownames(.estimation.data)
     result$weights <- unfiltered.weights
-    result$model <- data
     class(result) <- "DeepLearning"
     result$outcome.name <- outcome.name
     result$sample.description <- processed.data$description
     result$n.observations <- n
-    result$estimation.data <- .estimation.data
+    result$estimation.data <- estimation.data.2
     result$numeric.outcome <- numeric.outcome
-    result$confusion <- ConfusionMatrix(result, subset, unfiltered.weights)
+    #result$confusion <- ConfusionMatrix(result, subset, unfiltered.weights)
     result$variablenames <- vnames
+    if (!numeric.outcome)
+        result$outcome.levels <- levels(outcome.variable)
 
     if (missing == "Imputation (replace missing values with estimates)")
         data <- processed.data$data
@@ -202,17 +249,24 @@ VariableImportance <- function(object)
     if (class(object) != "DeepLearning")
         stop("Object should be of class \"DeepLearning\"\n")
 
-    xx <- object$original
+    xx <- object$original$arg.params
     mod_in <- c()
     struct <- c()
-    for (i in 1:length(xx@layers))
+    i <- 1
+    last.i <- NA
+    while (i <= length(xx))
     {
-        mod_in <- c(mod_in, xx@layers[[i]][["weights"]])
-        struct <- c(struct, nrow(xx@layers[[i]][["weights"]]) - 1)
+        tmp <- as.array(xx[[i]])
+        tmp2 <- as.array(xx[[i+1]])
+        mod_in <- c(mod_in, as.numeric(rbind(tmp,tmp2)))
+        struct <- c(struct, nrow(xx[[i]]))
+        last.i <- i
+        i <- i + 2  # every second entry is the bias
     }
-    struct <- c(struct, ncol(xx@layers[[length(xx@layers)]][["weights"]]))
+    struct <- c(struct, ncol(xx[[last.i]]))
+
     varImp <- suppressWarnings(olden(mod_in, struct=struct, bar_plot=FALSE))
-    rownames(varImp) <- object$variablenames
+    rownames(varImp) <- colnames(object$estimation.data)[-1]
     return(varImp)
 }
 
@@ -241,16 +295,21 @@ ConfusionMatrix.DeepLearning <- function(obj, subset = NULL, weights = NULL)
 
 #' \code{print.DeepLearning}
 #' @importFrom flipFormat DeepLearningTable FormatWithDecimals ExtractCommonPrefix
+#' @importFrom plotly plot_ly layout
 #' @export
 print.DeepLearning <- function(x, ...)
 {
     # Check about using label/names
     # Also, perhaps stats should be computed by predicting on the estimation data
 
-
     if (x$output == "Training error")
     {
-        print(plot(x$original))
+        yy <- x$log
+        pp <- plot_ly(x=1:length(yy), y=yy, type="scatter", mode="lines")
+        pp <- layout(pp, xaxis=list(title="Training epoch"),
+                     yaxis=list(title=ifelse(x$numeric.outcome, "RMSE", "Accuracy")))
+        print(pp)
+
     } else if (x$output == "Summary")
     {
         title <- paste0("Deep Learning: ", x$outcome.name)  # doesn't handle show labels
@@ -285,8 +344,7 @@ print.DeepLearning <- function(x, ...)
                                  subtitle = subtitle,
                                  footer = x$sample.description)
         print(tbl)
-    }
-    else
+    } else
     {
         print(x$call)
         cat(x$sample.description, "\n")

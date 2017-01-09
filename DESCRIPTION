@@ -20,7 +20,7 @@ Imports:
     methods,
     randomForest,
     NeuralNetTools,
-    darch,
+    mxnet,
     rhtmlLabeledScatter,
     rhtmlMoonPlot
 Suggests:
