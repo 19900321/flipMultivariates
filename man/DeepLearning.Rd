@@ -4,10 +4,11 @@
 \alias{DeepLearning}
 \title{\code{DeepLearning}}
 \usage{
-DeepLearning(formula, hidden = c(50, 50), unit.function = "relu",
-  optimizer = "adam", epochs = 100, batch.size = 100, data = NULL,
-  subset = NULL, weights = NULL, output = "Summary",
-  missing = "Exclude cases with missing data", seed = 12321,
+DeepLearning(formula, hidden = c(50, 50), unit.function = c("relu",
+  "sigmoid", "softrelu", "tanh")[1], optimizer = c("adam", "rmsprop",
+  "adadelta", "adagrad")[1], epochs = 500, batch.size = 100, data = NULL,
+  subset = NULL, weights = NULL, output = c("Summary", "Training error",
+  "Text")[1], missing = "Exclude cases with missing data", seed = 12321,
   show.labels = FALSE, ...)
 }
 \arguments{
@@ -16,6 +17,20 @@ That is, the response is the grouping factor and the right hand side
 specifies the (non-factor) discriminators, and any transformations, interactions,
 or other non-additive operators will be ignored.
 transformations nor}
+
+\item{hidden}{Vector specifying the number of nodes in each hidden layer.
+For example \code{hidden = c(50,25)} creates a neural network with 2 layers,
+containing 50 nodes in the first layer and 25 nodes in the second layer.}
+
+\item{unit.function}{Activation function of nodes in neural network. Can be one of
+\code{"relu"} (rectified linear unit), \code{"sigmoid"}, \code{"softrelu"}
+or \code{"tanh"}}
+
+\item{optimizer}{Algorithm for adaptive learning rate used to train neural network}
+
+\item{epochs}{Length of training process.}
+
+\item{batch.size}{Size of training samples used in each weight-update iteration}
 
 \item{data}{A \code{\link{data.frame}} from which variables specified
 in formula are preferentially to be taken.}
@@ -27,7 +42,7 @@ may not be an expression. \code{subset} may not}
 \item{weights}{An optional vector of sampling weights, or, the name or, the
 name of a variable in \code{data}. It may not be an expression.}
 
-\item{output}{One of \code{"Importance"}, or \code{"Detail"}.}
+\item{output}{One of \code{"Summary", "Training error"}, or \code{"Text"}.}
 
 \item{missing}{How missing data is to be treated in the regression. Options:
 \code{"Error if missing data"},
@@ -41,6 +56,10 @@ variables label is an attribute (e.g., attr(foo, "label")).}
 \item{...}{Other arguments to be supplied to \code{\link{darch}}.}
 }
 \description{
-\code{DeepLearning}
+Constructs a deep learning model using a fully connected neural network with hidden layers
+}
+\examples{
+data(iris)
+m.iris <- DeepLearning(Species~Sepal.Length+Sepal.Width+Petal.Length+Petal.Width, data=iris)
 }
 

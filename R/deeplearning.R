@@ -5,13 +5,17 @@
 dataToNumeric <- function(df)
 {
     ctmp <- unlist(lapply(df, function(x){paste(class(x), collapse=" ")}))
-    ind <- which(ctmp != "character")
-    if (length(ind) == 0)
-        stop ("No numeric or factor columns in input data frame\n")
-    if (length(ind) < ncol(df))
-        warning("Columns of class 'character' discarded\n")
+    ind <- which(ctmp == "character")
+    if (length(ind) > 0)
+    {
+        for (i in ind)
+        {
+            warnings("Variable ", colnames(df)[i], " converted to a factor\n")
+            df[,i] <- factor(df[,i])
+        }
+    }
 
-    res <- as.data.frame(lapply(df[,ind], function(x){
+    res <- as.data.frame(lapply(df, function(x){
                    if (any(class(x) == "factor"))
                    {
                        return(FactorToNumeric(x, remove.first=F))
@@ -24,10 +28,10 @@ dataToNumeric <- function(df)
     cnames <- c()
     for (i in 1:ncol(df))
     {
-        if (any(class(df[,i]) == "character"))
-            next
         if (any(class(df[,i]) == "factor"))
         {
+            # factors are matched using colnames and label names
+            # so we do not need to worry about underlying numeric value
             tmp <- sprintf("%s:%s", colnames(df)[i], levels(df[,i]))
             cnames <- c(cnames, tmp)
         } else
@@ -48,6 +52,15 @@ dataToNumeric <- function(df)
 #' specifies the (non-factor) discriminators, and any transformations, interactions,
 #' or other non-additive operators will be ignored.
 #' transformations nor
+#' @param hidden Vector specifying the number of nodes in each hidden layer.
+#' For example \code{hidden = c(50,25)} creates a neural network with 2 layers,
+#' containing 50 nodes in the first layer and 25 nodes in the second layer.
+#' @param unit.function Activation function of nodes in neural network. Can be one of
+#' \code{"relu"} (rectified linear unit), \code{"sigmoid"}, \code{"softrelu"}
+#' or \code{"tanh"}
+#' @param optimizer Algorithm for adaptive learning rate used to train neural network
+#' @param epochs Length of training process.
+#' @param batch.size Size of training samples used in each weight-update iteration
 #' @param data A \code{\link{data.frame}} from which variables specified
 #' in formula are preferentially to be taken.
 #' @param subset An optional vector specifying a subset of observations to be
@@ -55,7 +68,7 @@ dataToNumeric <- function(df)
 #'   may not be an expression. \code{subset} may not
 #' @param weights An optional vector of sampling weights, or, the name or, the
 #'   name of a variable in \code{data}. It may not be an expression.
-#' @param output One of \code{"Importance"}, or \code{"Detail"}.
+#' @param output One of \code{"Summary", "Training error"}, or \code{"Text"}.
 #' @param missing How missing data is to be treated in the regression. Options:
 #'   \code{"Error if missing data"},
 #'   \code{"Exclude cases with missing data"},
@@ -68,17 +81,20 @@ dataToNumeric <- function(df)
 #' @importFrom flipU OutcomeName
 #' @importFrom flipTransformations AdjustDataToReflectWeights FactorToNumeric
 #' @import mxnet
+#' @examples
+#' data(iris)
+#' m.iris <- DeepLearning(Species~Sepal.Length+Sepal.Width+Petal.Length+Petal.Width, data=iris)
 #' @export
 DeepLearning <- function(formula,
                 hidden = c(50, 50),
-                unit.function = "relu",
-                optimizer = "adam",
+                unit.function = c("relu", "sigmoid", "softrelu", "tanh")[1],
+                optimizer = c("adam", "rmsprop", "adadelta", "adagrad")[1],
                 epochs = 500,
                 batch.size = 100,
                 data = NULL,
                 subset = NULL,
                 weights = NULL,
-                output = "Summary",
+                output = c("Summary", "Training error", "Text")[1],
                 missing  = "Exclude cases with missing data",
                 seed = 12321,
                 show.labels = FALSE,
@@ -170,6 +186,8 @@ DeepLearning <- function(formula,
     mmin <- min(as.numeric(.estimation.data.1[,1]), na.rm=T)
     estimation.data.2 <- cbind(as.numeric(.estimation.data.1[,1]),
                                dataToNumeric(.estimation.data.1[,-1]))
+    #if (length(vnames) != ncol(estimation.data.2) - 1)
+    #       stop("Number of variables differ\n")
 
     # Class labels MUST start at zero
     if (!numeric.outcome)
@@ -220,7 +238,6 @@ DeepLearning <- function(formula,
     result$n.observations <- n
     result$estimation.data <- estimation.data.2
     result$numeric.outcome <- numeric.outcome
-    #result$confusion <- ConfusionMatrix(result, subset, unfiltered.weights)
     result$variablenames <- vnames
     if (!numeric.outcome)
         result$outcome.levels <- levels(outcome.variable)
@@ -231,9 +248,6 @@ DeepLearning <- function(formula,
     result$formula <- input.formula
     result$output <- output
     result$missing <- missing
-    # 5. Statistics
-    #result$z.statistics <- result$original$importance[, 1:(ncol(result$original$importance) - 1)] / result$original$importanceSD
-    #result$p.values <- 2 * (1 - pnorm(abs(result$z.statistics)))
     result
 }
 
@@ -267,6 +281,7 @@ VariableImportance <- function(object)
 
     varImp <- suppressWarnings(olden(mod_in, struct=struct, bar_plot=FALSE))
     rownames(varImp) <- colnames(object$estimation.data)[-1]
+    #rownames(varImp) <- object$variablenames   # changes depending on show.labels
     return(varImp)
 }
 
@@ -301,7 +316,6 @@ print.DeepLearning <- function(x, ...)
 {
     # Check about using label/names
     # Also, perhaps stats should be computed by predicting on the estimation data
-
     if (x$output == "Training error")
     {
         yy <- x$log

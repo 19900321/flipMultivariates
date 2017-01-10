@@ -121,6 +121,7 @@ Probabilities.DeepLearning <- function(x)
 #' @import mxnet
 deepLearningExtractVariables <- function(object, type, newdata = object$model, na.action = na.pass)
 {
+    ind.missing <- which(apply(newdata, 1, function(x){any(is.na(x))}))
     input.data <- dataToNumeric(newdata)
     new.names <- colnames(input.data)
     old.names <- colnames(object$estimation.data[,-1])
@@ -138,8 +139,10 @@ deepLearningExtractVariables <- function(object, type, newdata = object$model, n
     {
         ind.max <- apply(res, 1, which.max)
         pred.class <- object$outcome.levels[ind.max]
+        pred.class[ind.missing] <- NA
         return(pred.class)
     }
+    res[ind.missing,1:ncol(res)] <- NA
     return(res)
 }
 
